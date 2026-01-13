@@ -16,19 +16,6 @@
  * For issues and patches go to: https://github.com/erudika
  */
 /**
- * AWSEmailer.
+ * Email package.
  */
-module com.erudika.para.server.email.ses {
-	requires com.erudika.para.core;
-	requires org.apache.commons.lang3;
-	requires com.fasterxml.jackson.databind;
-	requires org.slf4j;
-	requires jakarta.mail;
-	requires jakarta.activation;
-	requires software.amazon.awssdk.auth;
-	requires software.amazon.awssdk.core;
-	requires software.amazon.awssdk.regions;
-	requires software.amazon.awssdk.services.sts;
-	requires software.amazon.awssdk.services.ses;
-	provides com.erudika.para.core.email.Emailer with com.erudika.para.server.email.AWSEmailer;
-}
+package com.erudika.para.server.email;
