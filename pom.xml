@@ -4,7 +4,7 @@
 
 	<groupId>com.erudika</groupId>
 	<artifactId>para-email-ses</artifactId>
-	<version>1.52.1-SNAPSHOT</version>
+	<version>1.52.1</version>
 
 	<packaging>jar</packaging>
 	<name>Para Amazon SES Emailer</name>
@@ -40,7 +40,7 @@
 		<connection>scm:git:https://github.com/erudika/para-email-ses.git</connection>
 		<developerConnection>scm:git:https://github.com/erudika/para-email-ses.git</developerConnection>
 		<url>https://github.com/erudika/para-email-ses</url>
-		<tag>HEAD</tag>
+		<tag>1.52.1</tag>
 	</scm>
 
 	<issueManagement>
