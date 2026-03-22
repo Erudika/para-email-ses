@@ -107,7 +107,7 @@ public class AWSEmailer implements Emailer {
 			Session session = Session.getDefaultInstance(new Properties());
 			MimeMessage message = new MimeMessage(session);
 			message.setSubject(subject, "UTF-8");
-			message.setFrom(new InternetAddress(Para.getConfig().supportEmail()));
+			message.setFrom(new InternetAddress(Para.getConfig().supportEmail(), Para.getConfig().appName()));
 			Iterator<String> emailz = emails.iterator();
 			message.setRecipients(RecipientType.TO, InternetAddress.parse(emailz.next()));
 			StringBuilder sb = new StringBuilder();
