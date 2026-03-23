@@ -19,6 +19,7 @@ package com.erudika.para.server.email;
 
 import com.erudika.para.core.email.Emailer;
 import com.erudika.para.core.utils.Para;
+import com.erudika.para.core.utils.Utils;
 import jakarta.activation.DataHandler;
 import jakarta.mail.Message.RecipientType;
 import jakarta.mail.Session;
@@ -38,12 +39,8 @@ import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.core.SdkBytes;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.ses.SesClient;
-import software.amazon.awssdk.services.ses.model.Body;
-import software.amazon.awssdk.services.ses.model.Content;
-import software.amazon.awssdk.services.ses.model.Destination;
-import software.amazon.awssdk.services.ses.model.Message;
-import software.amazon.awssdk.services.ses.model.SendEmailRequest;
 import software.amazon.awssdk.services.ses.model.SendRawEmailRequest;
+import software.amazon.awssdk.services.ses.model.SendRawEmailResponse;
 
 /**
  * An emailer that uses AWS Simple Email Service (SES).
@@ -65,42 +62,17 @@ public class AWSEmailer implements Emailer {
 
 	@Override
 	public boolean sendEmail(List<String> emails, String subject, String body) {
-		if (emails != null && !emails.isEmpty() && !StringUtils.isBlank(body)) {
-			SendEmailRequest.Builder request = SendEmailRequest.builder();
-			request.source(Para.getConfig().supportEmail()).build();
-			Iterator<String> emailz = emails.iterator();
-			Destination.Builder dest = Destination.builder();
-			dest.toAddresses(emailz.next());
-			while (emailz.hasNext()) {
-				dest.bccAddresses(emailz.next());
-			}
-			request.destination(dest.build());
-
-			Message.Builder msg = Message.builder();
-			msg.subject(Content.builder().data(subject).build());
-
-			// Include a body in both text and HTML formats
-			msg.body(Body.builder().html(Content.builder().data(body).charset(Para.getConfig().defaultEncoding()).build()).build());
-
-			request.message(msg.build());
-
-			Para.asyncExecute(new Runnable() {
-				public void run() {
-					sesclient.sendEmail(request.build());
-				}
-			});
-			return true;
-		}
-		return false;
+		return sendEmail(emails, subject, body, null, null, null);
 	}
 
 	@Override
 	public boolean sendEmail(List<String> emails, String subject, String body, InputStream attachment, String mimeType, String fileName) {
-		if (emails == null || emails.isEmpty() || StringUtils.isBlank(body)) {
+		if (emails == null || emails.isEmpty()) {
 			return false;
 		}
-		if (attachment == null || StringUtils.isBlank(mimeType)) {
-			return sendEmail(emails, subject, body);
+
+		if (StringUtils.isBlank(body)) {
+			body = "(blank)";
 		}
 
 		try {
@@ -116,32 +88,48 @@ public class AWSEmailer implements Emailer {
 			}
 			message.setRecipients(RecipientType.BCC, InternetAddress.parse(sb.toString()));
 
+			MimeMultipart msgBody = new MimeMultipart("alternative");
+			MimeBodyPart bodyWrapper = new MimeBodyPart();
+
+			// Define the text part
+			MimeBodyPart textPart = new MimeBodyPart();
+			textPart.setContent(Utils.stripHtml(body), "text/plain; charset=UTF-8");
+
+			// Define the HTML part
 			MimeBodyPart htmlPart = new MimeBodyPart();
 			htmlPart.setContent(body, "text/html; charset=UTF-8");
 
-			byte[] fileByteArray = attachment.readAllBytes();
-			InternetHeaders fileHeaders = new InternetHeaders();
-			fileHeaders.setHeader("Content-Type", mimeType + "; name=\"" + fileName + "\"");
-			fileHeaders.setHeader("Content-Transfer-Encoding", "base64");
-			fileHeaders.setHeader("Content-Disposition", "attachment; filename=\"" + fileName + "\"");
-
-			MimeBodyPart attach = new MimeBodyPart(fileHeaders, fileByteArray);
-			ByteArrayDataSource ds = new ByteArrayDataSource(fileByteArray, mimeType);
-			attach.setDataHandler(new DataHandler(ds));
-			attach.setFileName(fileName);
+			msgBody.addBodyPart(textPart);
+			msgBody.addBodyPart(htmlPart);
+			bodyWrapper.setContent(msgBody);
 
 			MimeMultipart msg = new MimeMultipart("mixed");
-			msg.addBodyPart(htmlPart);
-			msg.addBodyPart(attach);
+			msg.addBodyPart(bodyWrapper);
+
+			// File part
+			if (attachment != null && !StringUtils.isBlank(mimeType)) {
+				byte[] fileByteArray = attachment.readAllBytes();
+				InternetHeaders fileHeaders = new InternetHeaders();
+				fileHeaders.setHeader("Content-Type", mimeType + "; name=\"" + fileName + "\"");
+				fileHeaders.setHeader("Content-Transfer-Encoding", "base64");
+				fileHeaders.setHeader("Content-Disposition", "attachment; filename=\"" + fileName + "\"");
+
+				MimeBodyPart attach = new MimeBodyPart(fileHeaders, fileByteArray);
+				ByteArrayDataSource ds = new ByteArrayDataSource(fileByteArray, mimeType);
+				attach.setDataHandler(new DataHandler(ds));
+				attach.setFileName(fileName);
+
+				msg.addBodyPart(attach);
+			}
 
 			try (ByteArrayOutputStream outputStream = new ByteArrayOutputStream()) {
 				message.setContent(msg);
 				message.writeTo(outputStream);
 				SendRawEmailRequest rawEmailRequest = SendRawEmailRequest.builder().
 						rawMessage(r -> r.data(SdkBytes.fromByteArray(outputStream.toByteArray()))).build();
-				sesclient.sendRawEmail(rawEmailRequest);
+				SendRawEmailResponse res = sesclient.sendRawEmail(rawEmailRequest);
+				return res.sdkHttpResponse().isSuccessful();
 			}
-			return true;
 			// Display an error if something goes wrong.
 		} catch (Exception ex) {
 			LoggerFactory.getLogger(AWSEmailer.class).error(null, ex);
