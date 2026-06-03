@@ -17,6 +17,7 @@
  */
 package com.erudika.para.server.email;
 
+import com.erudika.para.core.App;
 import com.erudika.para.core.email.Emailer;
 import com.erudika.para.core.utils.Para;
 import com.erudika.para.core.utils.Utils;
@@ -29,10 +30,13 @@ import jakarta.mail.internet.MimeMessage;
 import jakarta.mail.internet.MimeMultipart;
 import jakarta.mail.util.ByteArrayDataSource;
 import java.io.ByteArrayOutputStream;
+import java.net.URI;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Properties;
 import org.apache.commons.lang3.StringUtils;
+import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
+import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
 import software.amazon.awssdk.core.SdkBytes;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.ses.SesAsyncClient;
@@ -45,19 +49,34 @@ import software.amazon.awssdk.services.ses.model.SendRawEmailRequest;
  */
 public class AWSEmailer implements Emailer {
 
-	private final SesAsyncClient sesclient;
+	private SesAsyncClient sesclient;
 
 	/**
 	 * No-args constructor.
 	 */
 	public AWSEmailer() {
-		sesclient = SesAsyncClient.builder().
-				// AWS SES is not available in all regions and it's best if we set it manually
-				region(Region.of(Para.getConfig().awsSesRegion())).build();
+	}
+
+	private SesAsyncClient getEmailer(App app) {
+		if (app == null) {
+			if (sesclient == null) {
+				sesclient = SesAsyncClient.builder().
+					// AWS SES is not available in all regions and it's best if we set it manually
+					region(Region.of(Para.getConfig().awsSesRegion())).build();
+			}
+			return sesclient;
+		} else {
+			String host =  Para.getConfig().getSettingForApp(app, "mail.host", "");
+			String accessKey = Para.getConfig().getSettingForApp(app, "mail.username", "");
+			String secretKey = Para.getConfig().getSettingForApp(app, "mail.password", "");
+			return SesAsyncClient.builder().endpointOverride(URI.create(host)).
+					credentialsProvider(StaticCredentialsProvider.create(AwsBasicCredentials.create(accessKey, secretKey))).
+					build();
+		}
 	}
 
 	@Override
-	public void sendSingleBatch(List<String> emails, String subject, String body, ByteArrayDataSource attachment, String fileName) {
+	public void sendSingleBatch(App app, List<String> emails, String subject, String body, ByteArrayDataSource attachment, String fileName) {
 		if (emails == null || emails.isEmpty()) {
 			return;
 		}
@@ -70,7 +89,7 @@ public class AWSEmailer implements Emailer {
 			Session session = Session.getDefaultInstance(new Properties());
 			MimeMessage message = new MimeMessage(session);
 			message.setSubject(subject, "UTF-8");
-			message.setFrom(new InternetAddress(Para.getConfig().supportEmail(), Para.getConfig().appName()));
+			message.setFrom(new InternetAddress(getFromEmail(app), getFromName(app)));
 			Iterator<String> emailz = emails.iterator();
 			message.setRecipients(RecipientType.TO, InternetAddress.parse(emailz.next()));
 			StringBuilder sb = new StringBuilder();
@@ -115,7 +134,7 @@ public class AWSEmailer implements Emailer {
 				message.writeTo(outputStream);
 				SendRawEmailRequest rawEmailRequest = SendRawEmailRequest.builder().
 						rawMessage(r -> r.data(SdkBytes.fromByteArray(outputStream.toByteArray()))).build();
-				sesclient.sendRawEmail(rawEmailRequest);
+				getEmailer(app).sendRawEmail(rawEmailRequest);
 			}
 			// Display an error if something goes wrong.
 		} catch (Exception ex) {
