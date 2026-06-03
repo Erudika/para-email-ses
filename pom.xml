@@ -53,14 +53,14 @@
 		<skipTests>false</skipTests>
 		<skipITs>${skipTests}</skipITs>
 		<skipUTs>${skipTests}</skipUTs>
-		<awsJdkVer>2.42.13</awsJdkVer>
+		<awsJdkVer>2.42.28</awsJdkVer>
 	</properties>
 
 	<dependencies>
 		<dependency>
 			<groupId>com.erudika</groupId>
 			<artifactId>para-core</artifactId>
-			<version>1.52.5</version>
+			<version>1.54.6-SNAPSHOT</version>
 			<scope>provided</scope>
 		</dependency>
 

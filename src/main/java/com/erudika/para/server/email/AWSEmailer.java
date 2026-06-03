@@ -24,23 +24,19 @@ import jakarta.activation.DataHandler;
 import jakarta.mail.Message.RecipientType;
 import jakarta.mail.Session;
 import jakarta.mail.internet.InternetAddress;
-import jakarta.mail.internet.InternetHeaders;
 import jakarta.mail.internet.MimeBodyPart;
 import jakarta.mail.internet.MimeMessage;
 import jakarta.mail.internet.MimeMultipart;
 import jakarta.mail.util.ByteArrayDataSource;
 import java.io.ByteArrayOutputStream;
-import java.io.InputStream;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Properties;
 import org.apache.commons.lang3.StringUtils;
-import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.core.SdkBytes;
 import software.amazon.awssdk.regions.Region;
-import software.amazon.awssdk.services.ses.SesClient;
+import software.amazon.awssdk.services.ses.SesAsyncClient;
 import software.amazon.awssdk.services.ses.model.SendRawEmailRequest;
-import software.amazon.awssdk.services.ses.model.SendRawEmailResponse;
 
 /**
  * An emailer that uses AWS Simple Email Service (SES).
@@ -49,26 +45,21 @@ import software.amazon.awssdk.services.ses.model.SendRawEmailResponse;
  */
 public class AWSEmailer implements Emailer {
 
-	private final SesClient sesclient;
+	private final SesAsyncClient sesclient;
 
 	/**
 	 * No-args constructor.
 	 */
 	public AWSEmailer() {
-		sesclient = SesClient.builder().
+		sesclient = SesAsyncClient.builder().
 				// AWS SES is not available in all regions and it's best if we set it manually
 				region(Region.of(Para.getConfig().awsSesRegion())).build();
 	}
 
 	@Override
-	public boolean sendEmail(List<String> emails, String subject, String body) {
-		return sendEmail(emails, subject, body, null, null, null);
-	}
-
-	@Override
-	public boolean sendEmail(List<String> emails, String subject, String body, InputStream attachment, String mimeType, String fileName) {
+	public void sendSingleBatch(List<String> emails, String subject, String body, ByteArrayDataSource attachment, String fileName) {
 		if (emails == null || emails.isEmpty()) {
-			return false;
+			return;
 		}
 
 		if (StringUtils.isBlank(body)) {
@@ -107,35 +98,29 @@ public class AWSEmailer implements Emailer {
 			msg.addBodyPart(bodyWrapper);
 
 			// File part
-			if (attachment != null && !StringUtils.isBlank(mimeType)) {
-				byte[] fileByteArray = attachment.readAllBytes();
-				InternetHeaders fileHeaders = new InternetHeaders();
-				fileHeaders.setHeader("Content-Type", mimeType + "; name=\"" + fileName + "\"");
-				fileHeaders.setHeader("Content-Transfer-Encoding", "base64");
-				fileHeaders.setHeader("Content-Disposition", "attachment; filename=\"" + fileName + "\"");
-
-				MimeBodyPart attach = new MimeBodyPart(fileHeaders, fileByteArray);
-				ByteArrayDataSource ds = new ByteArrayDataSource(fileByteArray, mimeType);
-				attach.setDataHandler(new DataHandler(ds));
+			if (attachment != null && !StringUtils.isBlank(attachment.getContentType())) {
+//				byte[] fileByteArray = attachment.readAllBytes();
+				MimeBodyPart attach = new MimeBodyPart(attachment.getInputStream());
+				attach.setHeader("Content-Type", attachment.getContentType() + "; name=\"" + fileName + "\"");
+				attach.setHeader("Content-Transfer-Encoding", "base64");
+				attach.setHeader("Content-Disposition", "attachment; filename=\"" + fileName + "\"");
+				attach.setDataHandler(new DataHandler(attachment));
 				attach.setFileName(fileName);
 
 				msg.addBodyPart(attach);
 			}
-
+			logger.debug("Sending email '{}' to {} recipients, {}", subject, emails.size());
 			try (ByteArrayOutputStream outputStream = new ByteArrayOutputStream()) {
 				message.setContent(msg);
 				message.writeTo(outputStream);
 				SendRawEmailRequest rawEmailRequest = SendRawEmailRequest.builder().
 						rawMessage(r -> r.data(SdkBytes.fromByteArray(outputStream.toByteArray()))).build();
-				SendRawEmailResponse res = sesclient.sendRawEmail(rawEmailRequest);
-				return res.sdkHttpResponse().isSuccessful();
+				sesclient.sendRawEmail(rawEmailRequest);
 			}
 			// Display an error if something goes wrong.
 		} catch (Exception ex) {
-			LoggerFactory.getLogger(AWSEmailer.class).error(null, ex);
+			logger.error(null, ex);
 		}
-		return false;
 	}
-
 
 }
