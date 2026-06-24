@@ -19,6 +19,7 @@ package com.erudika.para.server.email;
 
 import com.erudika.para.core.App;
 import com.erudika.para.core.email.Emailer;
+import static com.erudika.para.core.email.Emailer.logger;
 import com.erudika.para.core.utils.Para;
 import com.erudika.para.core.utils.Utils;
 import jakarta.activation.DataHandler;
@@ -90,14 +91,18 @@ public class AWSEmailer implements Emailer {
 			MimeMessage message = new MimeMessage(session);
 			message.setSubject(subject, "UTF-8");
 			message.setFrom(new InternetAddress(getFromEmail(app), getFromName(app)));
-			Iterator<String> emailz = emails.iterator();
-			message.setRecipients(RecipientType.TO, InternetAddress.parse(emailz.next()));
-			StringBuilder sb = new StringBuilder();
-			while (emailz.hasNext()) {
-				sb.append(emailz.next()).append(emailz.hasNext() ? "," : "");
+			if (emails.size() > 1) {
+				StringBuilder sb = new StringBuilder();
+				Iterator<String> emailz = emails.iterator();
+				while (emailz.hasNext()) {
+					sb.append(emailz.next()).append(emailz.hasNext() ? "," : "");
+				}
+				message.setRecipients(RecipientType.BCC, InternetAddress.parse(sb.toString()));
+				String to = "noreply@" + StringUtils.substringAfter(getFromEmail(app), "@");
+				message.setRecipients(RecipientType.TO, InternetAddress.parse(to));
+			} else {
+				message.setRecipients(RecipientType.TO, InternetAddress.parse(emails.iterator().next()));
 			}
-			message.setRecipients(RecipientType.BCC, InternetAddress.parse(sb.toString()));
-
 			MimeMultipart msgBody = new MimeMultipart("alternative");
 			MimeBodyPart bodyWrapper = new MimeBodyPart();
 
