@@ -36,6 +36,7 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Properties;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.Strings;
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
 import software.amazon.awssdk.core.SdkBytes;
@@ -70,7 +71,8 @@ public class AWSEmailer implements Emailer {
 			String host =  Para.getConfig().getSettingForApp(app, "mail.host", "");
 			String accessKey = Para.getConfig().getSettingForApp(app, "mail.username", "");
 			String secretKey = Para.getConfig().getSettingForApp(app, "mail.password", "");
-			return SesAsyncClient.builder().endpointOverride(URI.create(host)).
+			URI endpoint = URI.create(Strings.CI.startsWithAny(host, "https://", "http://") ? host : "https://" + host);
+			return SesAsyncClient.builder().endpointOverride(endpoint).
 					credentialsProvider(StaticCredentialsProvider.create(AwsBasicCredentials.create(accessKey, secretKey))).
 					build();
 		}
@@ -139,7 +141,13 @@ public class AWSEmailer implements Emailer {
 				message.writeTo(outputStream);
 				SendRawEmailRequest rawEmailRequest = SendRawEmailRequest.builder().
 						rawMessage(r -> r.data(SdkBytes.fromByteArray(outputStream.toByteArray()))).build();
-				getEmailer(app).sendRawEmail(rawEmailRequest);
+				getEmailer(app).sendRawEmail(rawEmailRequest).whenComplete((response, error) -> {
+					if (error != null) {
+						logger.error("Failed to send email '{}'", subject, error);
+					} else {
+						logger.debug("Email '{}' accepted by SES with message ID {}", subject, response.messageId());
+					}
+				});
 			}
 			// Display an error if something goes wrong.
 		} catch (Exception ex) {
