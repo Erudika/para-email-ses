@@ -31,12 +31,10 @@ import jakarta.mail.internet.MimeMessage;
 import jakarta.mail.internet.MimeMultipart;
 import jakarta.mail.util.ByteArrayDataSource;
 import java.io.ByteArrayOutputStream;
-import java.net.URI;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Properties;
 import org.apache.commons.lang3.StringUtils;
-import org.apache.commons.lang3.Strings;
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
 import software.amazon.awssdk.core.SdkBytes;
@@ -53,28 +51,88 @@ public class AWSEmailer implements Emailer {
 
 	private SesAsyncClient sesclient;
 
+	private Emailer defaultFallback;
+
 	/**
 	 * No-args constructor.
 	 */
 	public AWSEmailer() {
 	}
 
+	@Override
+	public void setDefaultFallback(Emailer emailer) {
+		defaultFallback = emailer;
+	}
+
 	private SesAsyncClient getEmailer(App app) {
 		if (app == null) {
-			if (sesclient == null) {
-				sesclient = SesAsyncClient.builder().
-					// AWS SES is not available in all regions and it's best if we set it manually
-					region(Region.of(Para.getConfig().awsSesRegion())).build();
-			}
-			return sesclient;
+			return buildClient();
 		} else {
-			String host =  Para.getConfig().getSettingForApp(app, "mail.host", "");
+			String host = Para.getConfig().getSettingForApp(app, "mail.host", "");
 			String accessKey = Para.getConfig().getSettingForApp(app, "mail.username", "");
 			String secretKey = Para.getConfig().getSettingForApp(app, "mail.password", "");
-			URI endpoint = URI.create(Strings.CI.startsWithAny(host, "https://", "http://") ? host : "https://" + host);
-			return SesAsyncClient.builder().endpointOverride(endpoint).
-					credentialsProvider(StaticCredentialsProvider.create(AwsBasicCredentials.create(accessKey, secretKey))).
-					build();
+			if (StringUtils.isBlank(host) || StringUtils.isBlank(accessKey) || StringUtils.isBlank(secretKey)) {
+				return buildClient();
+			} else {
+				return SesAsyncClient.builder().
+						region(getRegionFromHost(host, app)).
+						credentialsProvider(StaticCredentialsProvider.create(AwsBasicCredentials.create(accessKey, secretKey))).
+						build();
+			}
+		}
+	}
+
+	private SesAsyncClient buildClient() {
+		if (sesclient == null) {
+			sesclient = SesAsyncClient.builder().
+					// AWS SES is not available in all regions and it's best if we set it manually
+					region(Region.of(Para.getConfig().awsSesRegion())).build();
+		}
+		return sesclient;
+	}
+
+	private static Region getRegionFromHost(String host, App app) {
+		String hostname = host;
+		int schemeEnd = hostname.indexOf("://");
+		if (schemeEnd >= 0) {
+			hostname = hostname.substring(schemeEnd + 3);
+		}
+		hostname = StringUtils.substringBefore(hostname, "/");
+		hostname = StringUtils.substringBeforeLast(hostname, ":");
+
+		String defaultRegion = Para.getConfig().awsSesRegion();
+		String awsSuffix = ".amazonaws.";
+		int suffixStart = hostname.indexOf(awsSuffix);
+		if (suffixStart <= 0) {
+			logger.warn("Unable to derive AWS region from `mail.host` for app {}. Using {}.", app.getId(), defaultRegion);
+			return Region.of(defaultRegion);
+		}
+
+		String serviceAndRegion = hostname.substring(0, suffixStart);
+		int separator = serviceAndRegion.indexOf('.');
+		if (separator <= 0 || separator == serviceAndRegion.length() - 1) {
+			logger.warn("Unable to derive AWS region from `mail.host` for app {}. Using {}.", app.getId(), defaultRegion);
+			return Region.of(defaultRegion);
+		}
+		return Region.of(serviceAndRegion.substring(separator + 1));
+	}
+
+	private static boolean isSmtpHost(String host) {
+		String hostname = host.trim();
+		int schemeEnd = hostname.indexOf("://");
+		if (schemeEnd >= 0) {
+			hostname = hostname.substring(schemeEnd + 3);
+		}
+		hostname = StringUtils.substringBefore(hostname, "/");
+		return hostname.regionMatches(true, 0, "email-smtp.", 0, "email-smtp.".length());
+	}
+
+	private void sendWithJavaMail(App app, List<String> emails, String subject, String body,
+			ByteArrayDataSource attachment, String fileName) throws Exception {
+		if (defaultFallback != null) {
+			defaultFallback.sendSingleBatch(app, emails, subject, body, attachment, fileName);
+		} else {
+			logger.error("Default fallback implementation for Emailer not set.");
 		}
 	}
 
@@ -89,6 +147,14 @@ public class AWSEmailer implements Emailer {
 		}
 
 		try {
+			if (app != null) {
+				String host = Para.getConfig().getSettingForApp(app, "mail.host", "");
+				if (isSmtpHost(host)) {
+					logger.debug("Sending email '{}' using JavaMail SMTP", subject);
+					sendWithJavaMail(app, emails, subject, body, attachment, fileName);
+					return;
+				}
+			}
 			Session session = Session.getDefaultInstance(new Properties());
 			MimeMessage message = new MimeMessage(session);
 			message.setSubject(subject, "UTF-8");
